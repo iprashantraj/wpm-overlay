@@ -283,7 +283,7 @@ class WPMTracker:
                 self.is_alt_pressed = True
             
             if self.is_alt_pressed:
-                if hasattr(key, 'char') and key.char and key.char.lower() == 'r':
+                if hasattr(key, 'char') and key.char and key.char.lower() == 'q':
                     # Schedule reset on main thread
                     self.root.after(0, self.reset_stats)
                     return
