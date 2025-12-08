@@ -59,6 +59,9 @@ class WPMTracker:
         self.root.configure(bg=self.bg_color)
         self.root.attributes('-alpha', 0.90)  # semi-opaque
 
+        # Top Speed State
+        self.max_wpm = 0
+
         # Close button
         self.close_button = tk.Button(
             self.root,
@@ -73,6 +76,33 @@ class WPMTracker:
         )
         self.close_button.place(relx=1.0, x=-10, y=10, anchor="ne")
         self.root.after(100, lambda: self.close_button.lift())
+
+        # Reset button
+        self.reset_button = tk.Button(
+            self.root,
+            text="⟳",
+            command=self.reset_stats,
+            bg="#333333",
+            fg="#ffffff",
+            font=("Consolas", 12, "bold"),
+            bd=0,
+            activebackground="#4444ff",
+            activeforeground="#ffffff"
+        )
+        self.reset_button.place(relx=1.0, x=-40, y=10, anchor="ne")
+        self.root.after(100, lambda: self.reset_button.lift())
+
+        # Top Speed Label
+        self.top_speed_label = tk.Label(
+            self.root,
+            text="Top: 0",
+            font=("Consolas", 10),
+            fg="#888888",
+            bg=self.bg_color
+        )
+        self.top_speed_label.place(relx=1.0, x=-75, y=13, anchor="ne")
+        self.root.after(100, lambda: self.top_speed_label.lift())
+
 
         # State & concurrency
         self.lock = threading.Lock()
@@ -128,12 +158,13 @@ class WPMTracker:
         self.resizer.bind("<Double-Button-1>", self._reset_size)
 
         # Bind dragging to multiple widgets so dragging works from any area
-        for widget in (self.root, self.frame, self.canvas, self.close_button):
+        for widget in (self.root, self.frame, self.canvas, self.close_button, self.reset_button):
             widget.bind('<Button-1>', self.start_move)
             widget.bind('<B1-Motion>', self.do_move)
 
         # Keyboard listener (daemon thread)
-        self.listener = keyboard.Listener(on_press=self.on_press)
+        self.is_alt_pressed = False # Track Alt key state
+        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.daemon = True
         self.listener.start()
 
@@ -247,6 +278,16 @@ class WPMTracker:
         Ignore pure modifiers (shift/ctrl/alt), function keys, arrows, etc.
         """
         try:
+            # Check for Alt+R shortcut
+            if key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
+                self.is_alt_pressed = True
+            
+            if self.is_alt_pressed:
+                if hasattr(key, 'char') and key.char and key.char.lower() == 'r':
+                    # Schedule reset on main thread
+                    self.root.after(0, self.reset_stats)
+                    return
+
             now = time.perf_counter()
             ch = getattr(key, 'char', None)
 
@@ -305,6 +346,22 @@ class WPMTracker:
             # Do not raise from listener thread
             return
 
+    def on_release(self, key):
+        if key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
+            self.is_alt_pressed = False
+
+    def reset_stats(self):
+        """Reset all WPM stats and history."""
+        with self.lock:
+            self.timestamps.clear()
+            self.wpm_history.clear()
+            self.current_word_chars = []
+            self.max_wpm = 0
+        
+        # Update UI immediately
+        self.top_speed_label.config(text="Top: 0")
+        self.update_ui()
+
     # ---------- WPM calculation ----------
     def calculate_count(self, time_window):
         """Return the count of events in the last time_window seconds."""
@@ -316,7 +373,7 @@ class WPMTracker:
                 self.timestamps.popleft()
             cnt = sum(1 for t in self.timestamps if t >= now - time_window)
         return cnt
-
+    
     def calculate_wpm(self, time_window):
         """Standard conversion: 5 keystrokes = 1 word"""
         count = self.calculate_count(time_window)
@@ -369,6 +426,11 @@ class WPMTracker:
         w15 = self.calculate_wpm(15)
         w30 = self.calculate_wpm(30)
         w60 = self.calculate_wpm(60)
+
+        # Update Top Speed
+        if w15 > self.max_wpm:
+            self.max_wpm = w15
+            self.top_speed_label.config(text=f"Top: {self.max_wpm}")
 
         # update accent color based on 15s WPM (fast feedback)
         new_color = self.get_color_for_wpm(w15)
